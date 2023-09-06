@@ -82,11 +82,11 @@ def parse_time(time):
     SEC = 0
     MEM = ""
     WHAT = ""
-    LETTER = False
+    LETTER = False # Used for spliting different time types
     TIMES = [ ]
     for ch in time:
-        # Sadly, systemd doesn't require spaces between different time types
-        # So, We need to advanced parsing. Meh
+        # Unfortunately, systemd doesn't enforce the use of spaces between
+        # different time types, So We need to advanced parsing. Meh
         # Store systemd times as a list into TIMES list
         if ch == " ":
             continue # Skip empty spaces
@@ -231,9 +231,9 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                 target.write(f'env-file = {val[1]}\n')
             case "Restart":
                 if val[1] == "no":
-                    target.write('restart = no')
+                    target.write('restart = no\n')
                 else:
-                    target.write('restart = yes')
+                    target.write('restart = yes\n')
             case "TimeoutStartSec" | "TimeoutStopSec" | "TimeoutSec":
                 if val[1] == "infinity":
                     TIME = 0
@@ -266,7 +266,8 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                 target.write(f'inittab-line = {val[1]}\n')
             case "KillSignal":
                 SIG = f'{val[1]}'.removeprefix('SIG')
-                target.write(f'term-signal = {sig}\n')
+                target.write(f'term-signal = {SIG}\n')
+                # ToDo: Show warning if the name used for signal isn't recognized by dinit
             case _:
                 print(f'Not implemented key: {val[0]}')
         # ToDo: More
