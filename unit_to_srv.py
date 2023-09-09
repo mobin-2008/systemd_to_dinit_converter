@@ -1,7 +1,14 @@
 #!/usr/bin/python3
 ### unit_to_srv.py: Convert systemd unit files into dinit services
-#
 # Requires Python 3.10 or later!
+#
+# Useful resources:
+# Systemd documention: man:systemd.unit(5)
+#                      man:systemd.service(5)
+#                      man:systemd.timer(5)
+#                      man:systemd.kill(5)
+#                      man:systemd.exec(5)
+# Skarnet.org's unit conversion: https://skarnet.org/software/s6/unit-conversion.html
 #
 # SPDX-License-Identifier: ISC
 #
@@ -20,17 +27,20 @@
 #
 
 import os
+import signal
 import argparse
 
 ## Systemd unit "key" ref map
 systemd_ref_map = [
-    "Description",
+    # We ignore these keys:
+    "Documentation",
     # We map systemd things in this order:
     "Type", # simple -> process (bgprocess?)
             # exec -> process
             # forking -> bgprocess
             # oneshot -> scripted
             # notify -> process
+    "Description", # -> A comment at dinit service
     "Wants", # -> waits-for
     "Requires", # -> depends-on
     "Requisite", # -> depends-on
@@ -49,8 +59,8 @@ systemd_ref_map = [
     "PIDFile", # -> pid-file
     "ExecStart", # -> command
     "ExecStop", # -> stop-command
-    "TimeoutStartSec", # -> start-timeout # Give warning on werid values
-    "TimeoutStopSec", # -> stop-timeout # Same
+    "TimeoutStartSec", # -> start-timeout, with converting systemd timespans
+    "TimeoutStopSec", # -> stop-timeout, same
     "TimeoutSec", # -> both: start-timeout, stop-timeout
     "Restart", # -> restart (with converting some systemd things)
     "EnvironmentFile", # -> env-file
@@ -71,19 +81,19 @@ comments = [ ]
 values = [ ]
 
 def warning(message):
-    if args.quiet:
-        print(f'\nWARN: {message}\n')
+    if not args.quiet:
+        print(f'\nWARN: {message}')
 
 # Systemd has a basic syntax for times, such as (5min and 20sec) but
 # we need to convert them into seconds only.
 def parse_time(time):
     if time.isnumeric():
         return time
-    SEC = 0
-    MEM = ""
-    WHAT = ""
-    LETTER = False # Used for spliting different time types
-    TIMES = [ ]
+    sec = 0
+    mem = ""
+    what = ""
+    letter = False # Used for spliting different time types
+    times = [ ]
     for ch in time:
         # Unfortunately, systemd doesn't enforce the use of spaces between
         # different time types, So We need to advanced parsing. Meh
@@ -91,42 +101,43 @@ def parse_time(time):
         if ch == " ":
             continue # Skip empty spaces
         if ch.isnumeric():
-            if not LETTER:
-                MEM += ch
+            if not letter:
+                mem += ch
                 continue
             else:
-                TIMES.append([ WHAT.strip(), MEM.strip() ])
-                MEM += ch # Here's Next entry
-                WHAT = "" # Reset WHAT for new entry
-                LETTER = False # Reset LETTER for new entry
+                times.append([ what.strip(), mem.strip() ])
+                mem += ch # Here's Next entry
+                what = "" # Reset what for new entry
+                letter = False # Reset letter for new entry
                 continue
         if ch.isalpha():
-            WHAT += ch
-            LETTER = True
-    TIMES.append([ WHAT.strip(), MEM.strip() ]) # Catch last entry
-    for item in TIMES:
+            what += ch
+            letter = True
+    times.append([ what.strip(), mem.strip() ]) # Catch last entry
+    for item in times:
         match item[0]:
             case "μs" | "us" | "usec":
-                SEC += (float(MEM) / 1000000)
+                sec += (float(mem) / 1000000)
             case "ms" | "msec":
-                SEC += (float(MEM) / 1000)
+                sec += (float(mem) / 1000)
             case "s" | "sec" | "second" | "seconds":
-                SEC += float(MEM)
+                sec += float(mem)
             case "m" | "min" | "minute" | "minutes":
-                SEC += (float(MEM) * 60)
+                sec += (float(mem) * 60)
             case "h" | "hr" | "hour" | "hours":
-                SEC += (float(MEM) * 3600)
+                sec += (float(mem) * 3600)
             case "d" | "day" | "days":
-                SEC += (float(MEM) * 86400)
+                sec += (float(mem) * 86400)
             case "w" | "week" | "weeks":
-                SEC += (float(MEM) * 604800)
+                sec += (float(mem) * 604800)
             case "M" | "month" | "months":
-                SEC += (float(MEM) * 2.628e+6)
+                sec += (float(mem) * 2592000)
             case "y" | "year" | "years":
-                SEC += (float(MEM) * 3.154e+7)
+                # ToDo: Throw a warning if result can't be captured in int type var
+                sec += (float(mem) * 31536000)
             case _:
-                warning(f"Can't parse given time: {item[0]}: {item[1]}")
-    return SEC
+                warning(f"Can't parse given time: {item[1]} {item[0]}")
+    return sec
 
 ## Parse flags
 parser = argparse.ArgumentParser(
@@ -135,26 +146,26 @@ parser = argparse.ArgumentParser(
         epilog='See Usage.md for more information'
 )
 parser.add_argument('unitfile')
-parser.add_argument('--quiet', '-q', action='store_false')
+parser.add_argument('--quiet', '-q', action='store_true')
 args = parser.parse_args()
 
 ## Parse systemd unit
 # In this stage, We just parse given unit file into a key "map"
 with open(args.unitfile, "r", encoding="UTF-8") as file:
     for line in file:
-        NAME = ""
-        MEMORY= ""
+        name = ""
+        memory = ""
         if line[0] == "#" or line[0] == ";":
             comments.append(f'In systemd service unit comment: {line}') # comment
         elif line[0] != "[":
             for ch in line:
                 if ch == "=":
-                    NAME = MEMORY
-                    MEMORY = ""
+                    name = memory
+                    memory = ""
                 else:
-                    MEMORY += ch
-            if NAME != "": # Ignore empty lines
-                values.append([ NAME.strip(), MEMORY.strip() ])
+                    memory += ch
+            if name: # Ignore empty lines
+                values.append([ name.strip(), memory.strip() ])
 
 ## Actual converting
 ## there is where fun begins :)
@@ -162,15 +173,17 @@ with open(args.unitfile, "r", encoding="UTF-8") as file:
 # services, but dinit doesn't support this way (and I think it's just OVER-ENGINERING),
 # You shuold provide a pid-file for forking (bgprocess) services.
 # 0: Isn't bgprocess, 1: Is bgprocess but doesn't have pid-file, 2: correct bgprocess
-IS_PIDFILE = 0
+is_pidfile = 0
 # Some systemd services doesn't have type
-HAS_TYPE = False
+has_type = False
 with open(args.unitfile + '.dinit', "w", encoding="UTF-8") as target:
     for val in values:
         if not val[0] in systemd_ref_map:
             warning(f'Unknown/Unsupported key: {val[0]}')
             continue
         match val[0]:
+            case "Documentation":
+                continue # no-op
             case "Description":
                 target.write(f'# Description: {val[1]}\n')
             case "Type":
@@ -179,7 +192,7 @@ with open(args.unitfile + '.dinit', "w", encoding="UTF-8") as target:
                         target.write('type = process\n')
                     case "forking":
                         target.write('type = bgprocess\n')
-                        IS_PIDFILE = 1
+                        is_pidfile = 1
                     case "oneshot":
                         target.write('type = scripted\n')
                     case "notify":
@@ -190,7 +203,7 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                     case "dbus":
                         print('\'type=dbus\' isn\'t supported by dinit!')
                         os._exit(1)
-                HAS_TYPE = True
+                has_type = True
             case "ExecStart":
                 target.write(f'command = {val[1]}\n')
             case "ExecStop":
@@ -226,7 +239,7 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                 target.write(f'restart-limit-interval = {parse_time(val[1])}\n')
             case "PIDFile":
                 target.write(f'pid-file = {val[1]}\n')
-                IS_PIDFILE = 2
+                is_pidfile = 2
             case "EnvironmentFile":
                 target.write(f'env-file = {val[1]}\n')
             case "Restart":
@@ -246,10 +259,10 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                 else:
                     target.write(f'stop-timeout = {TIME}\n')
             case "User":
-                STR=f'{val[1]}'
+                STR = f'{val[1]}'
                 for grp in values:
                     if grp[0] == "Group":
-                        STR=f'{val[1]}:{grp[1]}'
+                        STR = f'{val[1]}:{grp[1]}'
                 target.write(f'run-as = {STR}\n')
             case "Group":
                 # no-op, handled in "User"
@@ -265,20 +278,52 @@ https://skarnet.org/software/s6/notifywhenup.html''')
             case "UtmpIdentifier":
                 target.write(f'inittab-line = {val[1]}\n')
             case "KillSignal":
-                SIG = f'{val[1]}'.removeprefix('SIG')
-                target.write(f'term-signal = {SIG}\n')
-                # ToDo: Show warning if the name used for signal isn't recognized by dinit
+                SIG = ""
+                match val[1].removeprefix('SIG'):
+                    case "HUP":
+                        SIG = "HUP"
+                    case "INT":
+                        SIG = "INT"
+                    case "QUIT":
+                        SIG = "QUIT"
+                    case "KILL":
+                        SIG = "KILL"
+                    case "USR1":
+                        SIG = "USR1"
+                    case "USR2":
+                        SIG = "USR2"
+                    case "TERM":
+                        SIG = "TERM"
+                    case "CONT":
+                        SIG = "CONT"
+                    case "STOP":
+                        SIG = "STOP"
+                    case "INFO":
+                        SIG = "INFO"
+                    case _:
+                        warning(f'{val[1]} isn\'t recognized by Dinit, Trying to resolve it to number')
+                        for knownsig in signal.Signals:
+                            if val[1] == knownsig.name:
+                                SIG = knownsig.value
+                if SIG:
+                    # ToDo: Clear warning impl
+                    if not args.quiet:
+                        print(f' ... Resolved to {SIG}')
+                    target.write(f'term-signal = {SIG}\n')
+                else:
+                    if not args.quiet:
+                        print(f' ... Cannot resolve specifed signal: {val[1]}')
             case _:
                 print(f'Not implemented key: {val[0]}')
         # ToDo: More
-    if not HAS_TYPE:
+    if not has_type:
         target.write('type = process\n') # Default fall-back type
     for comment in comments:
         target.write(comment)
-    if IS_PIDFILE == 1:
+    if is_pidfile == 1:
         warning('Service is "forking" type but doesn\'t have any pid-file!, See Usage.md')
         target.write('# Service is "forking" type but doesn\'t have any pid-file!\n')
 
-print('Converting service unit to dinit service is completed.')
+print('\nConverting service unit to dinit service is completed.')
 print('It\'s HIGHLY recommended to modify this generated file to fit your needs')
 print('Done!')
