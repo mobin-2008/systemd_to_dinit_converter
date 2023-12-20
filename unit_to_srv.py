@@ -3,12 +3,15 @@
 # Requires Python 3.10 or later!
 #
 # Useful resources:
-# Systemd documention: man:systemd.unit(5)
-#                      man:systemd.service(5)
-#                      man:systemd.timer(5)
-#                      man:systemd.kill(5)
-#                      man:systemd.exec(5)
-# Skarnet.org's unit conversion: https://skarnet.org/software/s6/unit-conversion.html
+# Systemd documention:
+#       man:systemd.unit(5)
+#       man:systemd.service(5)
+#       man:systemd.timer(5)
+#       man:systemd.kill(5)
+#       man:systemd.exec(5)
+#
+# Skarnet.org's unit conversion:
+#       https://skarnet.org/software/s6/unit-conversion.html
 #
 # SPDX-License-Identifier: ISC
 #
@@ -29,8 +32,15 @@
 import os
 import signal
 import argparse
+from dataclasses import dataclass
 
-## Systemd unit "key" ref map
+# A C-style structure to keep .ini style files key=value configs
+@dataclass
+class key_value_struct:
+    key: str
+    value: str
+
+## Systemd unit "key" reference map
 systemd_ref_map = [
     # We ignore these keys:
     "Documentation",
@@ -74,15 +84,24 @@ systemd_ref_map = [
     "KillSignal", # -> term-signal
 ]
 
-## Empty list for comments
+## List for comments
 comments = [ ]
 
-## Empty list for values
-values = [ ]
+## Map for input file (systemd unit)
+input_map = [ ]
+
+## Map for output file (dinit service)
+output_map = [ ]
 
 def warning(message):
     if not args.quiet:
         print(f'\nWARN: {message}')
+
+def sub_warning(message, flush):
+    if not args.quiet:
+        print(f'... {message}')
+        if flush:
+            print('\n')
 
 # Systemd has a basic syntax for times, such as (5min and 20sec) but
 # we need to convert them into seconds only.
@@ -145,8 +164,8 @@ parser = argparse.ArgumentParser(
         description='Convert systemd unit files into dinit services',
         epilog='See Usage.md for more information'
 )
-parser.add_argument('unitfile')
-parser.add_argument('--quiet', '-q', action='store_true')
+parser.add_argument('unitfile', help="Systemd unit file path")
+parser.add_argument('--quiet', '-q', action='store_true', help="Be quiet about warnings")
 args = parser.parse_args()
 
 ## Parse systemd unit
@@ -165,7 +184,7 @@ with open(args.unitfile, "r", encoding="UTF-8") as file:
                 else:
                     memory += ch
             if name: # Ignore empty lines
-                values.append([ name.strip(), memory.strip() ])
+                input_map.append(key_value_struct(name.strip(), memory.strip()))
 
 ## Actual converting
 ## there is where fun begins :)
@@ -176,150 +195,133 @@ with open(args.unitfile, "r", encoding="UTF-8") as file:
 is_pidfile = 0
 # Some systemd services doesn't have type
 has_type = False
-with open(args.unitfile + '.dinit', "w", encoding="UTF-8") as target:
-    for val in values:
-        if not val[0] in systemd_ref_map:
-            warning(f'Unknown/Unsupported key: {val[0]}')
-            continue
-        match val[0]:
-            case "Documentation":
-                continue # no-op
-            case "Description":
-                target.write(f'# Description: {val[1]}\n')
-            case "Type":
-                match val[1]:
-                    case "simple" | "exec":
-                        target.write('type = process\n')
-                    case "forking":
-                        target.write('type = bgprocess\n')
-                        is_pidfile = 1
-                    case "oneshot":
-                        target.write('type = scripted\n')
-                    case "notify":
-                        target.write('type = process\n')
-                        warning('''This service use systemd activition protocol
+for expr in input_map:
+    if not expr.key in systemd_ref_map:
+        warning(f'Unknown/Unsupported key: {expr.key}')
+        continue
+    match expr.key:
+        case "Documentation":
+            continue # no-op
+        case "Description":
+            comments.append(f'# Description: {expr.value}\n')
+        case "Type":
+            match expr.value:
+                case "simple" | "exec":
+                    output_map.append(key_value_struct('type', expr.value))
+                case "forking":
+                    output_map.append(key_value_struct('type', expr.value))
+                    is_pidfile = 1
+                case "oneshot":
+                    output_map.append(key_value_struct('type', expr.value))
+                case "notify":
+                    output_map.append(key_value_struct('type', 'process'))
+                    warning('''This service use systemd activition protocol
 Please change your service to use a proper ready notification protocol:
 https://skarnet.org/software/s6/notifywhenup.html''')
-                    case "dbus":
-                        print('\'type=dbus\' isn\'t supported by dinit!')
-                        os._exit(1)
-                has_type = True
-            case "ExecStart":
-                target.write(f'command = {val[1]}\n')
-            case "ExecStop":
-                target.write(f'stop-command = {val[1]}\n')
-            case "Wants" | "UpHolds":
-                for dep in val[1].split(" "):
-                    target.write(f'waits-for = {dep}\n')
-            case "Requires" | "Requisite" | "BindsTo" | "PartOf":
-                for dep in val[1].split(" "):
-                    target.write(f'depends-on = {dep}\n')
-            case "WantedBy" | "RequiredBy" | "UpheldBy":
-                for dep in val[1].split(" "):
-                    target.write(f'depends-ms = {dep}\n')
-            case "Before":
-                for dep in val[1].split(" "):
-                    target.write(f'before = {dep}\n')
-                warning('Before in dinit has different functionality over systemd')
-            case "After":
-                for dep in val[1].split(" "):
-                    target.write(f'after = {dep}\n')
-                warning('After in dinit has different functionality over systemd')
-            case "Alias":
-                for alias in val[1].split(" "):
-                    with open(alias, "w", encoding="UTF-8") as temp:
-                        temp.write(f'depends-on = {args.unitfile}.dinit\n')
-                print('Service unit has \"Alias\", Creating another service for convering that')
-            case "OnSuccess":
-                for chain in val[1].split(" "):
-                    target.write(f'chain-to = {val[1]}\n')
-            case "StartLimitBurst":
-                target.write(f'restart-limit-count = {val[1]}\n')
-            case "StartLimitIntervalSec":
-                target.write(f'restart-limit-interval = {parse_time(val[1])}\n')
-            case "PIDFile":
-                target.write(f'pid-file = {val[1]}\n')
-                is_pidfile = 2
-            case "EnvironmentFile":
-                target.write(f'env-file = {val[1]}\n')
-            case "Restart":
-                if val[1] == "no":
-                    target.write('restart = no\n')
-                else:
-                    target.write('restart = yes\n')
-            case "TimeoutStartSec" | "TimeoutStopSec" | "TimeoutSec":
-                if val[1] == "infinity":
-                    TIME = 0
-                else:
-                    TIME = parse_time(val[1])
-                if val[0] == "TimeoutSec":
-                    target.write(f'start-timeout = {TIME}\nstop-timeout = {TIME}\n')
-                elif "Start" in val[0]:
-                    target.write(f'start-timeout = {TIME}\n')
-                else:
-                    target.write(f'stop-timeout = {TIME}\n')
-            case "User":
-                STR = f'{val[1]}'
-                for grp in values:
-                    if grp[0] == "Group":
-                        STR = f'{val[1]}:{grp[1]}'
-                target.write(f'run-as = {STR}\n')
-            case "Group":
-                # no-op, handled in "User"
-                continue
-            case "WorkingDirectory":
-                target.write(f'working-dir = {val[1]}\n')
-            case "LimitCORE":
-                target.write(f'rlimit-core = {val[1]}\n')
-            case "LimitNOFILE":
-                target.write(f'rlimit-nofile = {val[1]}\n')
-            case "LimitDATA":
-                target.write(f'rlimit-data = {val[1]}\n')
-            case "UtmpIdentifier":
-                target.write(f'inittab-line = {val[1]}\n')
-            case "KillSignal":
-                SIG = ""
-                match val[1].removeprefix('SIG'):
-                    case "HUP":
-                        SIG = "HUP"
-                    case "INT":
-                        SIG = "INT"
-                    case "QUIT":
-                        SIG = "QUIT"
-                    case "KILL":
-                        SIG = "KILL"
-                    case "USR1":
-                        SIG = "USR1"
-                    case "USR2":
-                        SIG = "USR2"
-                    case "TERM":
-                        SIG = "TERM"
-                    case "CONT":
-                        SIG = "CONT"
-                    case "STOP":
-                        SIG = "STOP"
-                    case "INFO":
-                        SIG = "INFO"
-                    case _:
-                        warning(f'{val[1]} isn\'t recognized by Dinit, Trying to resolve it to number')
-                        for knownsig in signal.Signals:
-                            if val[1] == knownsig.name:
-                                SIG = knownsig.value
-                if SIG:
-                    # ToDo: Clear warning impl
-                    if not args.quiet:
-                        print(f' ... Resolved to {SIG}')
-                    target.write(f'term-signal = {SIG}\n')
-                else:
-                    if not args.quiet:
-                        print(f' ... Cannot resolve specifed signal: {val[1]}')
-            case _:
-                print(f'Not implemented key: {val[0]}')
+                case "dbus":
+                    print('\'type=dbus\' isn\'t supported by dinit!')
+                    os._exit(1)
+            has_type = True
+        case "ExecStart":
+            output_map.append(key_value_struct('command', expr.value))
+        case "ExecStop":
+            output_map.append(key_value_struct('stop-command', expr.value))
+        case "Wants" | "UpHolds":
+            for dep in expr.value.split(" "):
+                output_map.append(key_value_struct('waits-for', dep))
+        case "Requires" | "Requisite" | "BindsTo" | "PartOf":
+            for dep in expr.value.split(" "):
+                output_map.append(key_value_struct('depends-on', dep))
+        case "WantedBy" | "RequiredBy" | "UpheldBy":
+            for dep in expr.value.split(" "):
+                output_map.append(key_value_struct('depends-ms', dep))
+        case "Before":
+            for dep in expr.value.split(" "):
+                output_map.append(key_value_struct('before', dep))
+            warning('Before in dinit has different functionality over systemd')
+        case "After":
+            for dep in expr.value.split(" "):
+                output_map.append(key_value_struct('after', dep))
+            warning('After in dinit has different functionality over systemd')
+        case "Alias":
+            for alias in expr.value.split(" "):
+                with open(alias, "w", encoding="UTF-8") as temp:
+                    temp.write(f'depends-on = {args.unitfile}.dinit\n')
+            print('Service unit has \"Alias\", Creating another service for convering that')
+        case "OnSuccess":
+            for chain in expr.value.split(" "):
+                output_map.append(key_value_struct('chain-to', sdep))
+        case "StartLimitBurst":
+            output_map.append(key_value_struct('restart-limit-count', expr.value))
+        case "StartLimitIntervalSec":
+            output_map.append(key_value_struct('restart-limit-interval', expr.value))
+        case "PIDFile":
+            output_map.append(key_value_struct('pid-file', expr.value))
+            is_pidfile = 2
+        case "EnvironmentFile":
+            output_map.append(key_value_struct('env-file', expr.value))
+        case "Restart":
+            if expr.value == "true" or expr.value == "false":
+                output_map.append(key_value_struct('restart', expr.value))
+        case "TimeoutStartSec" | "TimeoutStopSec" | "TimeoutSec":
+            if expr.value == "infinity":
+                TIME = 0
+            else:
+                TIME = parse_time(expr.value)
+            if expr.value == "TimeoutSec":
+                output_map.append(key_value_struct('start-timeout', TIME))
+                output_map.append(key_value_struct('stop-timeout', TIME))
+            elif "Start" in expr.key:
+                output_map.append(key_value_struct('start-timeout', TIME))
+            else:
+                output_map.append(key_value_struct('start-timeout', TIME))
+        case "User":
+            STR = f'{expr.value}'
+            for grp in input_map:
+                if grp.key == "Group":
+                    STR = f'{expr.value}:{grp.value}'
+            output_map.append(key_value_struct('run-as', STR))
+        case "Group":
+            # no-op, handled in "User"
+            continue
+        case "WorkingDirectory":
+            output_map.append(key_value_struct('working-dir', expr.value))
+        case "LimitCORE":
+            output_map.append(key_value_struct('rlimit-core', expr.value))
+        case "LimitNOFILE":
+            output_map.append(key_value_struct('rlimit-nofile', expr.value))
+        case "LimitDATA":
+            output_map.append(key_value_struct('rlimit-data', expr.value))
+        case "UtmpIdentifier":
+            output_map.append(key_value_struct('inittab-line', expr.value))
+        case "KillSignal":
+            SIG = ""
+            match expr.value.removeprefix('SIG'):
+                case "HUP" | "INT" | "QUIT" | "KILL" | "USR1" | "USR2" | "TERM" | "CONT" | "STOP" | "INFO":
+                    SIG = expr.value.removeprefix('SIG')
+                case _:
+                    warning(f'{expr.value} isn\'t recognized by Dinit, Trying to resolve it to number')
+                    for knownsig in signal.Signals:
+                        if expr.value == knownsig.name:
+                            SIG = knownsig.value
+            if SIG:
+                sub_warning(f'Resolved to {SIG}', True)
+                output_map.append(key_value_struct('term-signal', expr.value))
+            else:
+                sub_warning(f'Cannot resolve specifed signal: {expr.value}', True)
+        case _:
+            print(f'Not implemented key: {expr.key}')
         # ToDo: More
-    if not has_type:
-        target.write('type = process\n') # Default fall-back type
+
+if not has_type:
+    output_map.append(key_value_struct('target', 'process')) # Default fall-back type
+
+## Writing output_map into target
+with open(args.unitfile + '.dinit', 'w', encoding="UTF-8") as target:
     for comment in comments:
         target.write(comment)
+    for expr in output_map:
+        target.write(f'{expr.key} = {expr.value}\n')
     if is_pidfile == 1:
         warning('Service is "forking" type but doesn\'t have any pid-file!, See Usage.md')
         target.write('# Service is "forking" type but doesn\'t have any pid-file!\n')
