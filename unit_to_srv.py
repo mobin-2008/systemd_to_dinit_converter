@@ -274,7 +274,7 @@ https://skarnet.org/software/s6/notifywhenup.html''')
             elif "Start" in expr.key:
                 output_map.append(key_value_struct('start-timeout', TIME))
             else:
-                output_map.append(key_value_struct('start-timeout', TIME))
+                output_map.append(key_value_struct('stop-timeout', TIME))
         case "User":
             STR = f'{expr.value}'
             for grp in input_map:
