@@ -32,6 +32,7 @@
 import os
 import signal
 import argparse
+import pathlib
 from dataclasses import dataclass
 
 # A C-style structure to keep .ini style files key=value configs
@@ -175,7 +176,7 @@ with open(args.unitfile, "r", encoding="UTF-8") as file:
         name = ""
         memory = ""
         if line[0] == "#" or line[0] == ";":
-            comments.append(f'In systemd service unit comment: {line}') # comment
+            comments.append(f'#In systemd service unit comment: {line}') # comment
         elif line[0] != "[":
             for ch in line:
                 if ch == "=":
@@ -317,7 +318,7 @@ if not has_type:
     output_map.append(key_value_struct('target', 'process')) # Default fall-back type
 
 ## Writing output_map into target
-with open(args.unitfile + '.dinit', 'w', encoding="UTF-8") as target:
+with open(pathlib.Path(args.unitfile).name + '.dinit', 'w', encoding="UTF-8") as target:
     for comment in comments:
         target.write(comment)
     for expr in output_map:
