@@ -45,6 +45,8 @@ class key_value_struct:
 systemd_ref_map = [
     # We ignore these keys:
     "Documentation",
+    # We don't provide support for these keys:
+    "Group", # -> Dinit doesn't support setting group along with user
     # We map systemd things in this order:
     "Type", # simple -> process
             # exec -> process
@@ -75,8 +77,7 @@ systemd_ref_map = [
     "TimeoutSec", # -> both: start-timeout, stop-timeout
     "Restart", # -> restart (with converting some systemd things)
     "EnvironmentFile", # -> env-file
-    "User", # -> run-as = User:
-    "Group", # -> run-as =    :Group
+    "User", # -> run-as = User
     "WorkingDirectory", # -> working-dir
     "LimitCORE", # -> rlimit-core
     "LimitDATA", # -> rlimit-data
@@ -278,13 +279,10 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                 output_map.append(key_value_struct('stop-timeout', TIME))
         case "User":
             STR = f'{expr.value}'
-            for grp in input_map:
-                if grp.key == "Group":
-                    STR = f'{expr.value}:{grp.value}'
             output_map.append(key_value_struct('run-as', STR))
         case "Group":
-            # no-op, handled in "User"
-            continue
+            warning('Setting specific group for execution is not support in Dinit')
+            sub_warning('Dinit will use primary group of user', False)
         case "WorkingDirectory":
             output_map.append(key_value_struct('working-dir', expr.value))
         case "LimitCORE":
