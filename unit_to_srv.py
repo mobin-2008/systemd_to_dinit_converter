@@ -15,7 +15,7 @@
 #
 # SPDX-License-Identifier: ISC
 #
-# Copyright (C) 2023 Mobin Aydinfar
+# Copyright (C) 2023-2024 Mobin Aydinfar
 #
 # Permission to use, copy, modify, and /or distribute this software for any purpose
 # with or without fee is hereby granted, provided that the above copyright notice and
@@ -46,7 +46,7 @@ systemd_ref_map = [
     # We ignore these keys:
     "Documentation",
     # We map systemd things in this order:
-    "Type", # simple -> process (bgprocess?)
+    "Type", # simple -> process
             # exec -> process
             # forking -> bgprocess
             # oneshot -> scripted
@@ -189,12 +189,12 @@ with open(args.unitfile, "r", encoding="UTF-8") as file:
 
 ## Actual converting
 ## there is where fun begins :)
-# Systemd can watch his children syscalls to determine pid in "forking" type
-# services, but dinit doesn't support this way (and I think it's just OVER-ENGINERING),
+# Systemd can watch the forking process to determine pid in "forking" type
+# services, but dinit doesn't support this way So PIDFile is mandatory.
 # You shuold provide a pid-file for forking (bgprocess) services.
 # 0: Isn't bgprocess, 1: Is bgprocess but doesn't have pid-file, 2: correct bgprocess
 is_pidfile = 0
-# Some systemd services doesn't have type
+# Some systemd services doesn't have type.
 has_type = False
 for expr in input_map:
     if not expr.key in systemd_ref_map:
@@ -315,7 +315,7 @@ https://skarnet.org/software/s6/notifywhenup.html''')
         # ToDo: More
 
 if not has_type:
-    output_map.append(key_value_struct('target', 'process')) # Default fall-back type
+    output_map.append(key_value_struct('type', 'process')) # Default fall-back type
 
 ## Writing output_map into target
 with open(pathlib.Path(args.unitfile).name + '.dinit', 'w', encoding="UTF-8") as target:
