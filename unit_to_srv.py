@@ -4,14 +4,14 @@
 #
 # Useful resources:
 # Systemd documention:
-#       man:systemd.unit(5)
-#       man:systemd.service(5)
-#       man:systemd.timer(5)
-#       man:systemd.kill(5)
-#       man:systemd.exec(5)
+#   man:systemd.unit(5)
+#   man:systemd.service(5)
+#   man:systemd.timer(5)
+#   man:systemd.kill(5)
+#   man:systemd.exec(5)
 #
 # Skarnet.org's unit conversion:
-#       https://skarnet.org/software/s6/unit-conversion.html
+#   https://skarnet.org/software/s6/unit-conversion.html
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
@@ -113,7 +113,7 @@ def sub_warning(message, flush):
         if flush:
             print('\n')
 
-# Systemd has a basic syntax for times, such as (5min and 20sec) but
+# Systemd has its own syntax for times, such as (5min and 20sec) but
 # we need to convert them into seconds only.
 def parse_time(time):
     if time.isnumeric():
@@ -125,7 +125,7 @@ def parse_time(time):
     times = [ ]
     for ch in time:
         # Unfortunately, systemd doesn't enforce the use of spaces between
-        # different time types, So We need to advanced parsing. Meh
+        # different time types, So We need to advanced parsing. Meh.
         # Store systemd times as a list into TIMES list
         if ch == " ":
             continue # Skip empty spaces
@@ -196,12 +196,11 @@ with open(args.unitfile, "r", encoding="UTF-8") as file:
             if name: # Ignore empty lines
                 input_map.append(key_value_struct(name.strip(), memory.strip()))
 
-## Actual converting
-## there is where fun begins :)
+## output_map Setup
 # Systemd can watch the forking process to determine pid in "forking" type
 # services, but dinit doesn't support this way So PIDFile is mandatory.
 # You shuold provide a pid-file for forking (bgprocess) services.
-# 0: Isn't bgprocess, 1: Is bgprocess but doesn't have pid-file, 2: correct bgprocess
+# 0: Isn't bgprocess, 1: Is bgprocess but doesn't have pid-file, 2: bgprocess with pid-file
 is_pidfile = 0
 # Some systemd services doesn't have type.
 has_type = False
@@ -331,7 +330,7 @@ with open(pathlib.Path(args.unitfile).name + '.dinit', 'w', encoding="UTF-8") as
         target.write(f'{expr.key} = {expr.value}\n')
     if is_pidfile == 1:
         warning('Service is "forking" type but doesn\'t have any pid-file!, See Usage.md')
-        target.write('# Service is "forking" type but doesn\'t have any pid-file!\n')
+        target.write('# Service is "bg-process" type but doesn\'t have any pid-file!\n')
 
 print('\nConverting service unit to dinit service is completed.')
 print('It\'s HIGHLY recommended to modify this generated file to fit your needs')
