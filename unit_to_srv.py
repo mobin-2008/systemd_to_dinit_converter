@@ -217,12 +217,12 @@ for expr in input_map:
         case "Type":
             match expr.value:
                 case "simple" | "exec":
-                    output_map.append(key_value_struct('type', expr.value))
+                    output_map.append(key_value_struct('type', 'process'))
                 case "forking":
-                    output_map.append(key_value_struct('type', expr.value))
+                    output_map.append(key_value_struct('type', 'bgprocess'))
                     is_pidfile = 1
                 case "oneshot":
-                    output_map.append(key_value_struct('type', expr.value))
+                    output_map.append(key_value_struct('type', 'scripted'))
                 case "notify":
                     output_map.append(key_value_struct('type', 'process'))
                     warning('''This service use systemd activition protocol
