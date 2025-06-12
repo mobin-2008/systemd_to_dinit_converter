@@ -74,9 +74,9 @@ systemd_ref_map = [
     "StartLimitBurst", # -> restart-limit-count
     "StartLimitIntervalSec", # -> restart-limit-interval
     "Alias", # -> an another service with depends-on this service
-    "WantedBy", # -> depends-ms
-    "RequiredBy", # -> depends-ms
-    "UpheldBy", # -> depends-ms
+    "WantedBy", # -> before
+    "RequiredBy", # -> before
+    "UpheldBy", # -> before
     "PIDFile", # -> pid-file
     "ExecStart", # -> command
     "ExecStop", # -> stop-command
@@ -244,7 +244,7 @@ https://skarnet.org/software/s6/notifywhenup.html''')
                 output_map.append(key_value_struct('depends-on', dep))
         case "WantedBy" | "RequiredBy" | "UpheldBy":
             for dep in expr.value.split(" "):
-                output_map.append(key_value_struct('depends-ms', dep))
+                output_map.append(key_value_struct('before', dep))
         case "Before":
             for dep in expr.value.split(" "):
                 output_map.append(key_value_struct('before', dep))
